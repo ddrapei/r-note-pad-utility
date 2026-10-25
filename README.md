@@ -4,14 +4,17 @@ Wacom tablet pad buttons and touch ring as Rnote shortcuts on Hyprland. The
 pad only works while Rnote is the focused window; everywhere else it does
 nothing.
 
-It also maps the tablet onto the Rnote window: its position, its size, and
-its shape (only the largest centred part of the tablet with the window's
-aspect ratio is active, so strokes aren't stretched). The mapping is updated
-whenever the pen comes into range and on Hyprland layout events (windows
-opening, closing, moving, workspace switches). With Rnote closed or on a
-hidden workspace, and when rnote-pad stops, the tablet covers the whole
-desktop again. The pen itself is only watched, never grabbed, and the touch
-surface is left alone.
+It also maps the tablet onto the visible part of the Rnote window: its
+position, its size, and its shape (only the largest centred part of the tablet
+with that aspect ratio is active, so strokes aren't stretched). The mapping is
+updated whenever the pen comes into range and on Hyprland layout events
+(windows opening, closing, moving, focus changes, workspace switches).
+
+If the scrolling layout has Rnote scrolled off-screen when you pick up the
+pen, rnote-pad focuses it, so the layout scrolls it into view with its usual
+animation. With Rnote closed or on a hidden workspace, and when rnote-pad
+stops, the tablet covers the whole desktop again. The pen itself is only
+watched, never grabbed, and the touch surface is left alone.
 
 ## Why
 

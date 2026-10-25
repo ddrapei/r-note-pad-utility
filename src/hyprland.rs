@@ -76,10 +76,25 @@ pub fn set_tablet_mapping(mapping: Option<&Mapping>) -> io::Result<()> {
     }
 }
 
+/// Focuses a window. In the scrolling layout that also scrolls it into view,
+/// animated like any other focus change.
+pub fn focus_window(address: &str) -> io::Result<()> {
+    let lua = format!(
+        "local r = hl.dispatch(hl.dsp.focus({{ window = {} }})); \
+         if r and not r.ok then error(\"window not found\", 0) end",
+        lua_string(&format!("address:{address}"))
+    );
+    match eval(&lua)?.trim() {
+        "ok" => Ok(()),
+        error => Err(io::Error::other(error.to_owned())),
+    }
+}
+
 /// The fields of `hyprctl clients -j` that rnote-pad needs.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Client {
+    pub address: String,
     pub class: String,
     pub at: [i32; 2],
     pub size: [i32; 2],
@@ -109,6 +124,22 @@ pub struct Monitor {
     pub id: i64,
     pub active_workspace: WorkspaceRef,
     pub special_workspace: WorkspaceRef,
+    x: i32,
+    y: i32,
+    /// Mode size in pixels, before scaling and rotation.
+    width: i32,
+    height: i32,
+    scale: f64,
+    transform: i32,
+}
+
+impl Monitor {
+    /// The area it shows, in layout coordinates.
+    pub fn rect(&self) -> Rect<i32> {
+        let (w, h) = if self.transform % 2 == 0 { (self.width, self.height) } else { (self.height, self.width) };
+        let logical = |px: i32| (f64::from(px) / self.scale).round() as i32;
+        Rect { x: self.x, y: self.y, w: logical(w), h: logical(h) }
+    }
 }
 
 pub fn clients() -> io::Result<Vec<Client>> {
@@ -134,15 +165,16 @@ impl Events {
         Ok(Self { reader: BufReader::new(connect(".socket2.sock")?), line: Vec::new() })
     }
 
-    /// The next event's name, e.g. "openwindow".
-    pub fn next_name(&mut self) -> io::Result<String> {
+    /// The next event's name and data, e.g. ("activewindowv2", "55e8c4da39b0").
+    pub fn next(&mut self) -> io::Result<(String, String)> {
         self.line.clear();
         if self.reader.read_until(b'\n', &mut self.line)? == 0 {
             return Err(io::ErrorKind::UnexpectedEof.into());
         }
-        // Window titles in the data need not be valid UTF-8; the name is.
-        let end = self.line.windows(2).position(|w| w == b">>").unwrap_or(self.line.len());
-        Ok(String::from_utf8_lossy(&self.line[..end]).trim_end().to_owned())
+        // Window titles in the data need not be valid UTF-8.
+        let line = String::from_utf8_lossy(&self.line);
+        let (name, data) = line.trim_end().split_once(">>").unwrap_or((line.trim_end(), ""));
+        Ok((name.to_owned(), data.to_owned()))
     }
 }
 
