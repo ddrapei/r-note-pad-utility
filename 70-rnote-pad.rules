@@ -1,0 +1,6 @@
+# rnote-pad: let the logged-in user read Wacom tablet pads and pens (uaccess)
+# and start the rnote-pad user service whenever a pad connects. The pen is
+# only watched for coming into range, never grabbed; the touch surface is left
+# alone. Must sort before 73-seat-late.rules, which applies uaccess.
+ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{id/vendor}=="056a", ENV{ID_INPUT_TABLET_PAD}=="1", TAG+="uaccess", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="rnote-pad.service"
+ACTION!="remove", SUBSYSTEM=="input", KERNEL=="event*", ATTRS{id/vendor}=="056a", ENV{ID_INPUT_TABLET}=="1", ENV{ID_INPUT_TABLET_PAD}!="1", ENV{ID_INPUT_TOUCHPAD}!="1", TAG+="uaccess"

@@ -1,0 +1,26 @@
+# rnote-pad: what the Wacom pad sends to Rnote.
+#
+# Shortcuts are MODS+KEY with Hyprland key names, e.g. "CTRL+SHIFT+Z" or
+# "CTRL+equal". Remove a line to make that button do nothing.
+# Apply changes with: systemctl --user restart rnote-pad
+
+# Shortcuts only reach a focused window of this class; elsewhere the pad is inert.
+window_class = "com.github.flxzt.rnote"
+
+# Map the tablet onto that window (position, size and shape) while it is on
+# screen; otherwise the tablet covers the whole desktop.
+follow_window = true
+
+[buttons]
+key1 = "CTRL+1"         # top key: Brush
+key2 = "CTRL+4"         # Eraser
+key3 = "CTRL+5"         # Selector
+ring_button = "CTRL+0"  # centre of the touch ring: reset zoom
+key4 = "CTRL+Z"         # Undo
+key5 = "CTRL+SHIFT+Z"   # Redo
+key6 = "CTRL+2"         # bottom key: Shaper
+
+[ring]
+clockwise = "CTRL+equal"         # zoom in
+counterclockwise = "CTRL+minus"  # zoom out
+step = 4                         # ring positions per shortcut (72 per full turn)

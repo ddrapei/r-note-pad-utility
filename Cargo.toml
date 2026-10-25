@@ -1,0 +1,15 @@
+[package]
+name = "rnote-pad"
+version = "0.1.0"
+edition = "2024"
+description = "Wacom tablet pad as Rnote shortcuts on Hyprland, with the tablet mapped onto the Rnote window"
+
+[dependencies]
+libc = "0.2.191"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+toml = "1.1.8"
+
+[profile.release]
+lto = true
+strip = true

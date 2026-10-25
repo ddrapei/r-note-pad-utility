@@ -1,0 +1,10 @@
+[Unit]
+Description=Wacom pad as Rnote shortcuts, tablet mapped onto Rnote
+Documentation=file://%h/Projects/rnote-pad/README.md
+
+# Started by 70-rnote-pad.rules whenever a Wacom pad connects; exits when it
+# disconnects. Nothing to enable.
+[Service]
+ExecStart=%h/.local/bin/rnote-pad
+Restart=on-failure
+RestartSec=2
