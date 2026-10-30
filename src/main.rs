@@ -1,16 +1,18 @@
-//! rnote-pad: Wacom tablet pad buttons as Rnote shortcuts, and the tablet
-//! mapped onto the Rnote window.
+//! rnote-pad: Wacom tablet pad and pen buttons as Rnote shortcuts, and the
+//! tablet mapped onto the Rnote window.
 //!
 //! The pad is grabbed exclusively, so Hyprland never sees it. That matters:
 //! Hyprland 0.56 broadcasts pad buttons to every client, and GTK 4.24 crashes
 //! in any client that isn't focused. Presses become key chords sent through
 //! Hyprland, and only while a window of the configured class is focused, so
-//! the pad does nothing anywhere else.
+//! the pad does nothing anywhere else. The pen's side buttons are only read;
+//! a libinput quirk keeps them from reaching apps.
 
 mod config;
 mod evdev;
 mod follow;
 mod hyprland;
+mod pen;
 mod ring;
 
 use std::path::PathBuf;
@@ -20,15 +22,16 @@ use std::thread;
 use std::time::{Duration, Instant};
 use std::{mem, ptr};
 
-use config::{Config, Shortcut};
+use config::{Action, Config, Shortcut};
 use follow::Follower;
 use hyprland::Outcome;
-use ring::Ring;
+use ring::{Dial, Ring};
 
 /// Overlapping synthetic chords can leave keys stuck in Hyprland; keep them apart.
 const MIN_GAP: Duration = Duration::from_millis(60);
 
-const USAGE: &str = "usage: rnote-pad [-v|--verbose] [-c|--config FILE] [--send SHORTCUT | /dev/input/eventN]";
+const USAGE: &str =
+    "usage: rnote-pad [-v|--verbose] [-c|--config FILE] [--send SHORTCUT | /dev/input/eventN]";
 
 struct Args {
     verbose: bool,
@@ -39,7 +42,12 @@ struct Args {
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut args = Args { verbose: false, config: None, device: None, send: None };
+    let mut args = Args {
+        verbose: false,
+        config: None,
+        device: None,
+        send: None,
+    };
     let mut it = std::env::args_os().skip(1);
     while let Some(arg) = it.next() {
         match arg.to_str() {
@@ -66,19 +74,69 @@ struct Sender {
     class: String,
     verbose: bool,
     last: Option<Instant>,
+    /// The last Rnote tool picked through rnote-pad. Tools picked in Rnote
+    /// itself go unnoticed.
+    tool: Option<Shortcut>,
 }
 
 impl Sender {
+    fn new(class: String, verbose: bool) -> Self {
+        Self {
+            class,
+            verbose,
+            last: None,
+            tool: None,
+        }
+    }
+
+    fn press(&mut self, action: &Action) {
+        let shortcut = match action {
+            Action::Send(shortcut) => shortcut,
+            Action::Switch(first, second) if self.tool.as_ref() == Some(first) => second,
+            Action::Switch(first, _) => first,
+        };
+        self.send(shortcut);
+    }
+
     fn send(&mut self, shortcut: &Shortcut) {
         if let Some(wait) = self.last.and_then(|t| MIN_GAP.checked_sub(t.elapsed())) {
             thread::sleep(wait);
         }
         self.last = Some(Instant::now());
         match hyprland::send_if_focused(&self.class, shortcut) {
-            Ok(Outcome::Sent) if self.verbose => eprintln!("  -> sent {shortcut}"),
-            Ok(Outcome::Skipped(focused)) if self.verbose => eprintln!("  -> skipped {shortcut}, {focused} has focus"),
-            Ok(_) => {}
+            Ok(outcome) => {
+                if matches!(outcome, Outcome::Sent) && shortcut.picks_tool() {
+                    self.tool = Some(shortcut.clone());
+                }
+                if self.verbose {
+                    match outcome {
+                        Outcome::Sent => eprintln!("  -> sent {shortcut}"),
+                        Outcome::Skipped(focused) => {
+                            eprintln!("  -> skipped {shortcut}, {focused} has focus")
+                        }
+                    }
+                }
+            }
             Err(e) => eprintln!("rnote-pad: sending {shortcut}: {e}"),
+        }
+    }
+
+    /// Sends one of two shortcuts `steps` times, `clockwise` for positive steps.
+    fn turn(
+        &mut self,
+        steps: i32,
+        clockwise: &Option<Shortcut>,
+        counterclockwise: &Option<Shortcut>,
+    ) {
+        let shortcut = if steps > 0 {
+            clockwise
+        } else {
+            counterclockwise
+        };
+        if let Some(shortcut) = shortcut {
+            for _ in 0..steps.unsigned_abs() {
+                self.send(shortcut);
+            }
         }
     }
 }
@@ -105,7 +163,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let config = match Config::load(args.config.as_deref()) {
+    let mut config = match Config::load(args.config.as_deref()) {
         Ok(config) => config,
         Err(e) => {
             eprintln!("rnote-pad: {e}");
@@ -120,7 +178,7 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        Sender { class: config.window_class, verbose: true, last: None }.send(&shortcut);
+        Sender::new(config.window_class, true).send(&shortcut);
         return ExitCode::SUCCESS;
     }
     let Some(path) = args.device.or_else(|| evdev::find_wacom("Pad")) else {
@@ -135,9 +193,12 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // Intuos Pro 3rd gen: ExpressKeys round a dial, and a Pro Pen 3.
+    let has_dial = pad.has_rel(evdev::REL_WHEEL).unwrap_or(false);
     eprintln!(
-        "rnote-pad: grabbed {}, config from {}, shortcuts go to {}",
+        "rnote-pad: grabbed {} (a pad with a {}), config from {}, shortcuts go to {}",
         path.display(),
+        if has_dial { "dial" } else { "touch ring" },
         config.source,
         config.window_class
     );
@@ -154,14 +215,26 @@ fn main() -> ExitCode {
             std::process::exit(0);
         });
     }
+    let sender = Arc::new(Mutex::new(Sender::new(
+        config.window_class.clone(),
+        args.verbose,
+    )));
     if config.follow_window {
-        let (events, pen) = (follower.clone(), follower.clone());
+        let events = follower.clone();
         thread::spawn(move || follow::watch_hyprland(events));
-        thread::spawn(move || follow::watch_pen(pen));
+    }
+    let following = config.follow_window.then(|| follower.clone());
+    // The [pen] section is for the Pro Pen 3; the 2nd gen's pen has a real eraser end.
+    let pen_buttons = has_dial.then(|| pen::Buttons {
+        config: mem::take(&mut config.pen),
+        sender: sender.clone(),
+    });
+    if following.is_some() || pen_buttons.is_some() {
+        thread::spawn(move || pen::watch(following, pen_buttons));
     }
 
     let mut ring = Ring::new(config.ring.step);
-    let mut sender = Sender { class: config.window_class.clone(), verbose: args.verbose, last: None };
+    let mut dial = Dial::new(config.dial.step);
     let result = loop {
         let ev = match pad.next_event() {
             Ok(ev) => ev,
@@ -175,23 +248,39 @@ fn main() -> ExitCode {
             }
         };
         if args.verbose && ev.kind != evdev::EV_SYN {
-            eprintln!("event type={:#x} code={:#x} value={}", ev.kind, ev.code, ev.value);
+            eprintln!(
+                "event type={:#x} code={:#x} value={}",
+                ev.kind, ev.code, ev.value
+            );
         }
         match (ev.kind, ev.code) {
             (evdev::EV_KEY, code) if ev.value == 1 => {
-                let shortcut = code.checked_sub(evdev::BTN_0).and_then(|b| config.buttons.get(b));
+                let shortcut = code.checked_sub(evdev::BTN_0).and_then(|b| {
+                    if has_dial {
+                        config.dial.button(b)
+                    } else {
+                        config.buttons.get(b)
+                    }
+                });
                 if let Some(shortcut) = shortcut {
-                    sender.send(shortcut);
+                    sender.lock().unwrap().send(shortcut);
                 }
             }
             (evdev::EV_ABS, evdev::ABS_WHEEL) => {
                 let steps = ring.update(ev.value);
-                let shortcut = if steps > 0 { &config.ring.clockwise } else { &config.ring.counterclockwise };
-                if let Some(shortcut) = shortcut {
-                    for _ in 0..steps.unsigned_abs() {
-                        sender.send(shortcut);
-                    }
-                }
+                sender.lock().unwrap().turn(
+                    steps,
+                    &config.ring.clockwise,
+                    &config.ring.counterclockwise,
+                );
+            }
+            (evdev::EV_REL, evdev::REL_WHEEL) => {
+                let steps = dial.update(ev.value);
+                sender.lock().unwrap().turn(
+                    steps,
+                    &config.dial.clockwise,
+                    &config.dial.counterclockwise,
+                );
             }
             // Nothing on the pad is touched any more.
             (evdev::EV_ABS, evdev::ABS_MISC) if ev.value == 0 => ring.release(),

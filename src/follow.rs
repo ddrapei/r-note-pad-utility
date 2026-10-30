@@ -4,12 +4,10 @@
 //! view first if the scrolling layout has it off-screen. With Rnote closed or
 //! on a hidden workspace the tablet covers the whole desktop again.
 
-use std::ops::RangeInclusive;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use crate::evdev;
 use crate::hyprland::{self, Client, Monitor};
 
 /// Hyprland events after which Rnote may have moved, resized, appeared or
@@ -35,9 +33,6 @@ const LAYOUT_EVENTS: [&str; 14] = [
     "minimized",
 ];
 
-/// "Pen in hand": BTN_TOOL_PEN, BTN_TOOL_RUBBER (eraser end) up to BTN_TOOL_AIRBRUSH.
-const PEN_TOOLS: RangeInclusive<u16> = 0x140..=0x144;
-
 /// Less of Rnote than this on screen, in layout pixels either way, isn't
 /// worth mapping the tablet onto.
 const MIN_VISIBLE: i32 = 100;
@@ -52,7 +47,10 @@ pub struct Rect<T> {
 
 impl Rect<i32> {
     fn contains(&self, other: &Self) -> bool {
-        other.x >= self.x && other.y >= self.y && other.x + other.w <= self.x + self.w && other.y + other.h <= self.y + self.h
+        other.x >= self.x
+            && other.y >= self.y
+            && other.x + other.w <= self.x + self.w
+            && other.y + other.h <= self.y + self.h
     }
 
     /// The part of `self` inside `screen`, if there is enough of it.
@@ -80,7 +78,15 @@ pub fn mapping_for(region: Rect<i32>, tablet_mm: (f64, f64)) -> Mapping {
     } else {
         (tablet_w, tablet_w / aspect)
     };
-    Mapping { region, area: Rect { x: (tablet_w - w) / 2.0, y: (tablet_h - h) / 2.0, w, h } }
+    Mapping {
+        region,
+        area: Rect {
+            x: (tablet_w - w) / 2.0,
+            y: (tablet_h - h) / 2.0,
+            w,
+            h,
+        },
+    }
 }
 
 /// The most recently focused window of `class` on a workspace that is shown,
@@ -95,7 +101,9 @@ pub fn shown_window<'a>(
         .filter(|c| c.class == class && c.mapped && !c.hidden && c.size[0] > 0 && c.size[1] > 0)
         .filter_map(|c| {
             let monitor = monitors.iter().find(|m| {
-                m.id == c.monitor && (m.active_workspace.id == c.workspace.id || m.special_workspace.id == c.workspace.id)
+                m.id == c.monitor
+                    && (m.active_workspace.id == c.workspace.id
+                        || m.special_workspace.id == c.workspace.id)
             })?;
             Some((c, monitor))
         })
@@ -112,7 +120,17 @@ pub struct Follower {
 
 impl Follower {
     pub fn new(class: String) -> Self {
-        Self { class, tablet_mm: None, applied: None }
+        Self {
+            class,
+            tablet_mm: None,
+            applied: None,
+        }
+    }
+
+    /// Following starts once the pen, and with it the tablet's size, is known.
+    pub fn start(&mut self, tablet_mm: (f64, f64)) {
+        self.tablet_mm = Some(tablet_mm);
+        self.refresh(false);
     }
 
     /// Looks at where Rnote is now and remaps the tablet if that changed.
@@ -134,7 +152,11 @@ impl Follower {
         }
     }
 
-    fn target(&self, tablet_mm: (f64, f64), bring_into_view: bool) -> std::io::Result<Option<Mapping>> {
+    fn target(
+        &self,
+        tablet_mm: (f64, f64),
+        bring_into_view: bool,
+    ) -> std::io::Result<Option<Mapping>> {
         let (mut clients, mut monitors) = (hyprland::clients()?, hyprland::monitors()?);
         if bring_into_view {
             let off_screen = shown_window(&clients, &monitors, &self.class)
@@ -197,53 +219,17 @@ pub fn watch_hyprland(follower: Arc<Mutex<Follower>>) {
     }
 }
 
-/// Refreshes, bringing Rnote into view, whenever the pen comes into range.
-/// Returns if the pen can't be read or disconnects.
-pub fn watch_pen(follower: Arc<Mutex<Follower>>) {
-    // udev may create the pen's node a moment after the pad's.
-    let path = (0..10).find_map(|attempt| {
-        if attempt > 0 {
-            thread::sleep(Duration::from_secs(1));
-        }
-        evdev::find_wacom("Pen")
-    });
-    let Some(path) = path else {
-        eprintln!("rnote-pad: no Wacom pen found, so the tablet won't follow Rnote");
-        return;
-    };
-    let pen = evdev::Device::open(&path).and_then(|pen| Ok((pen.size_mm()?, pen)));
-    let (size, mut pen) = match pen {
-        Ok(opened) => opened,
-        Err(e) => {
-            eprintln!(
-                "rnote-pad: cannot read {}: {e}, so the tablet won't follow Rnote (is 70-rnote-pad.rules up to date?)",
-                path.display()
-            );
-            return;
-        }
-    };
-    if let Err(e) = pen.only_keys(PEN_TOOLS) {
-        // Still works, it just wakes up for every pen movement.
-        eprintln!("rnote-pad: filtering pen events: {e}");
-    }
-    {
-        let mut follower = follower.lock().unwrap();
-        follower.tablet_mm = Some(size);
-        follower.refresh(false);
-    }
-    while let Ok(ev) = pen.next_event() {
-        if ev.kind == evdev::EV_KEY && PEN_TOOLS.contains(&ev.code) && ev.value == 1 {
-            follower.lock().unwrap().refresh(true);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const TABLET: (f64, f64) = (159.2, 99.5);
-    const DP2: Rect<i32> = Rect { x: 1283, y: 237, w: 1920, h: 1080 };
+    const DP2: Rect<i32> = Rect {
+        x: 1283,
+        y: 237,
+        w: 1920,
+        h: 1080,
+    };
 
     fn close(a: f64, b: f64) -> bool {
         (a - b).abs() < 0.01
@@ -251,30 +237,96 @@ mod tests {
 
     #[test]
     fn wide_region_uses_full_tablet_width() {
-        let m = mapping_for(Rect { x: 1295, y: 249, w: 1896, h: 1056 }, TABLET);
-        assert_eq!(m.region, Rect { x: 1295, y: 249, w: 1896, h: 1056 });
-        assert!(close(m.area.w, 159.2) && close(m.area.h, 88.67) && close(m.area.x, 0.0) && close(m.area.y, 5.42));
+        let m = mapping_for(
+            Rect {
+                x: 1295,
+                y: 249,
+                w: 1896,
+                h: 1056,
+            },
+            TABLET,
+        );
+        assert_eq!(
+            m.region,
+            Rect {
+                x: 1295,
+                y: 249,
+                w: 1896,
+                h: 1056
+            }
+        );
+        assert!(
+            close(m.area.w, 159.2)
+                && close(m.area.h, 88.67)
+                && close(m.area.x, 0.0)
+                && close(m.area.y, 5.42)
+        );
     }
 
     #[test]
     fn narrow_region_uses_centred_strip() {
-        let m = mapping_for(Rect { x: 2250, y: 249, w: 922, h: 1056 }, TABLET);
-        assert!(close(m.area.h, 99.5) && close(m.area.w, 86.87) && close(m.area.x, 36.16) && close(m.area.y, 0.0));
+        let m = mapping_for(
+            Rect {
+                x: 2250,
+                y: 249,
+                w: 922,
+                h: 1056,
+            },
+            TABLET,
+        );
+        assert!(
+            close(m.area.h, 99.5)
+                && close(m.area.w, 86.87)
+                && close(m.area.x, 36.16)
+                && close(m.area.y, 0.0)
+        );
     }
 
     #[test]
     fn visible_part_clips_to_the_screen() {
-        let on_screen = Rect { x: 1295, y: 275, w: 922, h: 1030 };
+        let on_screen = Rect {
+            x: 1295,
+            y: 275,
+            w: 922,
+            h: 1030,
+        };
         assert!(DP2.contains(&on_screen));
         assert_eq!(on_screen.visible_part(&DP2), Some(on_screen));
         // Scrolled half off the right edge, as seen on workspace 2.
-        let half = Rect { x: 3162, y: 275, w: 917, h: 1030 };
+        let half = Rect {
+            x: 3162,
+            y: 275,
+            w: 917,
+            h: 1030,
+        };
         assert!(!DP2.contains(&half));
         assert_eq!(half.visible_part(&DP2), None, "41 px left on screen");
-        let more = Rect { x: 2700, y: 275, w: 917, h: 1030 };
-        assert_eq!(more.visible_part(&DP2), Some(Rect { x: 2700, y: 275, w: 503, h: 1030 }));
+        let more = Rect {
+            x: 2700,
+            y: 275,
+            w: 917,
+            h: 1030,
+        };
+        assert_eq!(
+            more.visible_part(&DP2),
+            Some(Rect {
+                x: 2700,
+                y: 275,
+                w: 503,
+                h: 1030
+            })
+        );
         // Scrolled off to the left, where the laptop screen is.
-        assert_eq!(Rect { x: -529, y: 275, w: 922, h: 1030 }.visible_part(&DP2), None);
+        assert_eq!(
+            Rect {
+                x: -529,
+                y: 275,
+                w: 922,
+                h: 1030
+            }
+            .visible_part(&DP2),
+            None
+        );
     }
 
     fn layout(rnote_workspace: i64, special: i64) -> (Vec<Client>, Vec<Monitor>) {
@@ -289,14 +341,25 @@ mod tests {
             r#"[{{"id": 2, "activeWorkspace": {{"id": 2}}, "specialWorkspace": {{"id": {special}}}, "name": "DP-2",
                  "x": 1283, "y": 237, "width": 3840, "height": 2160, "scale": 2.0, "transform": 0}}]"#
         );
-        (serde_json::from_str(&clients).unwrap(), serde_json::from_str(&monitors).unwrap())
+        (
+            serde_json::from_str(&clients).unwrap(),
+            serde_json::from_str(&monitors).unwrap(),
+        )
     }
 
     #[test]
     fn finds_rnote_on_the_shown_workspace() {
         let (clients, monitors) = layout(2, 0);
         let (rnote, monitor) = shown_window(&clients, &monitors, "com.github.flxzt.rnote").unwrap();
-        assert_eq!(rnote.rect(), Rect { x: 1295, y: 249, w: 1896, h: 1056 });
+        assert_eq!(
+            rnote.rect(),
+            Rect {
+                x: 1295,
+                y: 249,
+                w: 1896,
+                h: 1056
+            }
+        );
         assert_eq!(monitor.rect(), DP2);
     }
 
@@ -319,6 +382,14 @@ mod tests {
                 "x": 3203, "y": -20, "width": 3840, "height": 2160, "scale": 2.0, "transform": 3}"#,
         )
         .unwrap();
-        assert_eq!(monitor.rect(), Rect { x: 3203, y: -20, w: 1080, h: 1920 });
+        assert_eq!(
+            monitor.rect(),
+            Rect {
+                x: 3203,
+                y: -20,
+                w: 1080,
+                h: 1920
+            }
+        );
     }
 }

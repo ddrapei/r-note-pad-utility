@@ -1,4 +1,4 @@
-# rnote-pad: what the Wacom pad sends to Rnote.
+# rnote-pad: what the Wacom pad and pen send to Rnote.
 #
 # Shortcuts are MODS+KEY with Hyprland key names, e.g. "CTRL+SHIFT+Z" or
 # "CTRL+equal". Remove a line to make that button do nothing.
@@ -11,14 +11,34 @@ window_class = "com.github.flxzt.rnote"
 # screen; otherwise the tablet covers the whole desktop.
 follow_window = true
 
+# Intuos Pro S, 3rd gen (PTK-470): four ExpressKeys round a dial.
+[dial]
+top = "CTRL+1"           # Brush
+right = "CTRL+2"         # Shaper
+bottom = "CTRL+3"        # Typewriter
+left = "CTRL+Z"          # Undo
+centre = "CTRL+SHIFT+Z"  # the button in the dial: Redo
+clockwise = "CTRL+equal"         # zoom in
+counterclockwise = "CTRL+minus"  # zoom out
+step = 1                         # dial clicks per shortcut
+
+# Its Pro Pen 3's side buttons, which a libinput quirk keeps from apps (see
+# README.md). Two shortcuts in brackets switch: the second if the first is the
+# last tool rnote-pad picked, otherwise the first.
+[pen]
+lower = ["CTRL+4", "CTRL+1"]  # nearest the tip: Eraser, or back to Brush
+upper = "CTRL+5"              # middle and top: Selector. Over Bluetooth the
+                              # tablet reports both alike, so they can't differ.
+
+# Intuos Pro S, 2nd gen (PTH-460): six ExpressKeys and a touch ring.
 [buttons]
 key1 = "CTRL+1"         # top key: Brush
-key2 = "CTRL+4"         # Eraser
-key3 = "CTRL+5"         # Selector
+key2 = "CTRL+2"         # Shaper
+key3 = "CTRL+3"         # Typewriter
 ring_button = "CTRL+0"  # centre of the touch ring: reset zoom
 key4 = "CTRL+Z"         # Undo
 key5 = "CTRL+SHIFT+Z"   # Redo
-key6 = "CTRL+2"         # bottom key: Shaper
+key6 = "CTRL+5"         # bottom key: Selector
 
 [ring]
 clockwise = "CTRL+equal"         # zoom in

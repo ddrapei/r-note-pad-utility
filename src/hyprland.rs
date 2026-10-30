@@ -108,7 +108,12 @@ pub struct Client {
 
 impl Client {
     pub fn rect(&self) -> Rect<i32> {
-        Rect { x: self.at[0], y: self.at[1], w: self.size[0], h: self.size[1] }
+        Rect {
+            x: self.at[0],
+            y: self.at[1],
+            w: self.size[0],
+            h: self.size[1],
+        }
     }
 }
 
@@ -136,9 +141,18 @@ pub struct Monitor {
 impl Monitor {
     /// The area it shows, in layout coordinates.
     pub fn rect(&self) -> Rect<i32> {
-        let (w, h) = if self.transform % 2 == 0 { (self.width, self.height) } else { (self.height, self.width) };
+        let (w, h) = if self.transform % 2 == 0 {
+            (self.width, self.height)
+        } else {
+            (self.height, self.width)
+        };
         let logical = |px: i32| (f64::from(px) / self.scale).round() as i32;
-        Rect { x: self.x, y: self.y, w: logical(w), h: logical(h) }
+        Rect {
+            x: self.x,
+            y: self.y,
+            w: logical(w),
+            h: logical(h),
+        }
     }
 }
 
@@ -162,7 +176,10 @@ pub struct Events {
 
 impl Events {
     pub fn connect() -> io::Result<Self> {
-        Ok(Self { reader: BufReader::new(connect(".socket2.sock")?), line: Vec::new() })
+        Ok(Self {
+            reader: BufReader::new(connect(".socket2.sock")?),
+            line: Vec::new(),
+        })
     }
 
     /// The next event's name and data, e.g. ("activewindowv2", "55e8c4da39b0").
@@ -173,7 +190,10 @@ impl Events {
         }
         // Window titles in the data need not be valid UTF-8.
         let line = String::from_utf8_lossy(&self.line);
-        let (name, data) = line.trim_end().split_once(">>").unwrap_or((line.trim_end(), ""));
+        let (name, data) = line
+            .trim_end()
+            .split_once(">>")
+            .unwrap_or((line.trim_end(), ""));
         Ok((name.to_owned(), data.to_owned()))
     }
 }
@@ -194,7 +214,8 @@ fn request(request: &str) -> io::Result<String> {
 /// Our session's socket first, then the newest instance: Hyprland may have
 /// restarted since this service inherited its environment.
 fn connect(socket: &str) -> io::Result<UnixStream> {
-    let runtime = env::var_os("XDG_RUNTIME_DIR").ok_or_else(|| io::Error::other("XDG_RUNTIME_DIR is not set"))?;
+    let runtime = env::var_os("XDG_RUNTIME_DIR")
+        .ok_or_else(|| io::Error::other("XDG_RUNTIME_DIR is not set"))?;
     let hypr = PathBuf::from(runtime).join("hypr");
     let mut instances: Vec<_> = fs::read_dir(&hypr)
         .into_iter()
@@ -255,7 +276,10 @@ mod tests {
 
     #[test]
     fn lua_strings_are_escaped() {
-        assert_eq!(lua_string("com.github.flxzt.rnote"), r#""com.github.flxzt.rnote""#);
+        assert_eq!(
+            lua_string("com.github.flxzt.rnote"),
+            r#""com.github.flxzt.rnote""#
+        );
         assert_eq!(lua_string(r#"a"b\c"#), r#""a\"b\\c""#);
         assert_eq!(lua_string("x\ny"), r#""x\010y""#);
     }
